@@ -5,7 +5,7 @@ Run the N-Peaks normalization on an image array in the npeaks_normalize function
 
 Default settings should work reasonably well for brain images.
 
-* More documentation to follow. *
+_More documentation to follow._
 
 Dependencies: 
 numpy,
