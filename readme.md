@@ -11,3 +11,5 @@ Dependencies:
 numpy,
 scipy,
 KDEpy
+
+_Contact: philipp.wallimann@usz.ch_
