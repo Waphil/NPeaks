@@ -1,213 +1,296 @@
+import os
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.colors import Normalize, ListedColormap
 
 INTERPOLATION_MODE = "none"
-
+IMAGE_FORMAT = ".png"
 
 # Default colors:
 # Peak: (255, 32, 32)
 # Homogeneous, in peak: (255, 32, 128)
 # Homogeneous, out of peak: (128, 32, 255)
 # Mask: (128, 128, 255)
-# High snippet: (32, 192, 32)
-# Low snippet: (32, 192, 32)
-peak_color = np.array((255, 32, 32)) / 255.
-hom_peak_color = np.array((255, 32, 128)) / 255.
-hom_nonpeak_color = np.array((128, 32, 255)) / 255.
-mask_color = np.array((128, 128, 255)) / 255.
-low_snip_color = np.array((32, 192, 192)) / 255.
-#low_snip_color = np.array((32, 128, 192)) / 255.
-low_snip_lambda_color = np.array((32, 128, 192)) / 255.
-#low_snip_lambda_color = np.array((32, 192, 192)) / 255.
-high_snip_color = np.array((32, 192, 32)) / 255.
-high_snip_lambda_color = np.array((128, 192, 128)) / 255.
+PEAK_COLOR = np.array((255, 32, 32)) / 255.
+HOM_PEAK_COLOR = np.array((255, 32, 128)) / 255.
+HOM_NONPEAK_COLOR = np.array((128, 32, 255)) / 255.
+MASK_COLOR = np.array((128, 128, 255)) / 255.
+
+PEAK_ALPHA = 0.8
+HOM_PEAK_ALPHA = 0.5
+HOM_NONPEAK_ALPHA = 0.3
+MASK_ALPHA = 0.2
+
+DEFAULT_PLOT_SIZE = (1792, 1033) # In pixels
+
+# Using proper rcParams settings
+TITLE_FONT_SIZE = 'large'
+LABEL_FONT_SIZE = 'medium'
+FONT_SIZE = 10.0
+LEGEND_TITLE_FONT_SIZE = None
+LEGEND_FONT_SIZE = 'medium'
+XTICK_LABEL_SIZE = 'medium'
+XTICK_MAJOR_SIZE = 3.5
+XTICK_MAJOR_WIDTH = 0.8
+XTICK_MINOR_SIZE = 2.0
+XTICK_MINOR_WIDTH = 0.6
+YTICK_LABEL_SIZE = 'medium'
+YTICK_MAJOR_SIZE = 3.5
+YTICK_MAJOR_WIDTH = 0.8
+YTICK_MINOR_SIZE = 2.0
+YTICK_MINOR_WIDTH = 0.6
+
+# For 3d images, specify which of the three orthogonal slices should be shown on the summary plot as local intensity
+# change.
+LIC_INDEX = 0
+
+def calculate_extent(intensity_arr, voxel_spacing_arr):
+    extent_arr = intensity_arr.shape*voxel_spacing_arr
+    return extent_arr
+
+def calculate_largest_mask_indices(mask_arr):
+    axis_arr = np.arange(mask_arr.ndim)
+    most_voxels_index_list = [
+        np.argmax(np.count_nonzero(mask_arr, axis=tuple(np.delete(axis_arr, i)))) for i in axis_arr
+    ]
+    return most_voxels_index_list
+
+def select_ort_slices(intensity_arr, index_arr):
+    slice_arr_list = [intensity_arr.take(indices=index, axis=i) for i, index in enumerate(index_arr)]
+    return slice_arr_list
 
 class NormVisualizer:
 
 
-    def __init__(self, plot_size=(1792, 1033), color_list=None, alpha_list=None, is_adjust_grayscale_to_view=True):
+    def __init__(self, plot_folder, plot_size=DEFAULT_PLOT_SIZE, color_list=None,
+                 alpha_list=None, is_adjust_grayscale_to_view=True):
+        # Set up rcParams
+        plt.rcParams["axes.labelsize"] = LABEL_FONT_SIZE
+        plt.rcParams["axes.titlesize"] = TITLE_FONT_SIZE
+        plt.rcParams["font.size"] = FONT_SIZE
+        plt.rcParams["legend.title_fontsize"] = LEGEND_TITLE_FONT_SIZE
+        plt.rcParams["legend.fontsize"] = LEGEND_FONT_SIZE
+        plt.rcParams["xtick.labelsize"] = XTICK_LABEL_SIZE
+        plt.rcParams["xtick.major.size"] = XTICK_MAJOR_SIZE
+        plt.rcParams["xtick.major.width"] = XTICK_MAJOR_WIDTH
+        plt.rcParams["xtick.minor.size"] = XTICK_MINOR_SIZE
+        plt.rcParams["xtick.minor.width"] = XTICK_MINOR_WIDTH
+        plt.rcParams["ytick.labelsize"] = YTICK_LABEL_SIZE
+        plt.rcParams["ytick.major.size"] = YTICK_MAJOR_SIZE
+        plt.rcParams["ytick.major.width"] = YTICK_MAJOR_WIDTH
+        plt.rcParams["ytick.minor.size"] = YTICK_MINOR_SIZE
+        plt.rcParams["ytick.minor.width"] = YTICK_MINOR_WIDTH
+
+        self.plot_folder = plot_folder
         self.plot_size = plot_size
-        self.color_list = color_list if not color_list is None else [peak_color, hom_peak_color, hom_nonpeak_color,
-                                                                     mask_color, low_snip_color, high_snip_color,
-                                                                     #high_snip_lambda_color]
-                                                                     low_snip_lambda_color]
-        self.alpha_list = alpha_list if not alpha_list is None else [0.8, 0.5, 0.3,
-                                                                     0.2, 1.0, 1.0,
-                                                                     1.0]
+        self.color_list = color_list if not color_list is None else [PEAK_COLOR, HOM_PEAK_COLOR, HOM_NONPEAK_COLOR,
+                                                                     MASK_COLOR]
+        self.alpha_list = alpha_list if not alpha_list is None else [PEAK_ALPHA, HOM_PEAK_ALPHA, HOM_NONPEAK_ALPHA,
+                                                                     MASK_ALPHA]
         self.is_adjust_grayscale_to_view = is_adjust_grayscale_to_view
 
-    def plot(self, image_arr, mask_arr, kde_grid, kde_bw,
-             high_grad_cutoff_percentage,
-             n_snippets_min, n_snippets_max, vol_snippets_min, lam,
-             peak_prom_fraction, peak_selection_mode,
-             plot_parameter_dict, voxel_spacing_arr, save_path, image_name=None, mask_name=None):
-        n_dim = image_arr.ndim
+    def plot(self, intensity_arr, local_intensity_change_arr, mask_arr, local_intensity_change_threshold,
+             histogram_calculation_function, peak_intensity, peak_bounds, lic_hist_string=None, hist_peak_string=None,
+             voxel_spacing_arr=None, image_name=None, mask_name=None):
+        # Can only plot normalization visualization for images of 2 or 3 dimensions at this point
+        if intensity_arr.ndim not in [2, 3]:
+            raise ValueError(f"Error: Plotting of normalization results is not implemented for image arrays with "
+                             f"dimension {intensity_arr.ndim}"
+                             )
+
+        # If voxel spacing is given, set up a proper array and use mm as the axis label
         if voxel_spacing_arr is None:
             is_use_mm = False
-            voxel_spacing_arr = np.ones(n_dim)
+            voxel_spacing_arr = np.ones(intensity_arr.ndim)
         else:
             is_use_mm = True
 
-        fig, axs = plt.subplots(2, max(3, n_dim))
+        # Set up the title string
+        image_name = "" if image_name is None else image_name
+        title_string = f"Normalization Summary for Image {image_name}"
 
-        title = "Normalization summary"
-        if image_name is not None:
-            title += f" for image {image_name}"
-        if mask_name is not None:
-            title += f" for mask {mask_name}"
-        plt.suptitle(title)
+        # Set up the string above the local intensity change histogram
+        lic_hist_string = f"Local Intensity Change Threshold: {local_intensity_change_threshold:.1f}" \
+            if lic_hist_string is None else lic_hist_string
 
-        threshold_arr = plot_parameter_dict["threshold_arr"]
-        jsd_low_arr = plot_parameter_dict["jsd_low_arr"]
-        jsd_high_arr = plot_parameter_dict["jsd_high_arr"]
-        n_snippets = plot_parameter_dict["n_snippets"]
-        nonorm_low_snippet_pdf = plot_parameter_dict["nonorm_low_snippet_pdf"]
-        nonorm_high_snippet_pdf = plot_parameter_dict["nonorm_high_snippet_pdf"]
-        nonorm_chosen_pdf = plot_parameter_dict["nonorm_chosen_pdf"]
-        nonorm_all_pdf = plot_parameter_dict["nonorm_all_pdf"]
-        chosen_threshold = plot_parameter_dict["chosen_threshold"]
-        homogeneous_mask = plot_parameter_dict["homogeneous_mask"]
-        pdf_nonorm = plot_parameter_dict["pdf_nonorm"]
-        chosen_peak_index = plot_parameter_dict["chosen_peak_index"]
-        used_peak_int_arr = plot_parameter_dict["used_peak_int_arr"]
-        used_peaks_pdf_nonorm_list = plot_parameter_dict["used_peaks_pdf_nonorm_list"]
-        used_peaks_mask_list = plot_parameter_dict["used_peaks_mask_list"]
+        # Set up the string above the histogram peak visualization
+        hist_peak_string = f"Histogram Peak Intensity: {peak_intensity:.1f}" \
+            if hist_peak_string is None else hist_peak_string
 
-        # Plot snippet JSD curves in bottom left
-        ax_jsd = axs[1,0]
+        mm_string = " mm" if is_use_mm else ""
 
-        ax_jsd.set_title(f"JSD of snippet to highest and lowest grad snippets; n = {n_snippets}; lambda {lam} \nSettings: high_grad_cutoff = {high_grad_cutoff_percentage}%, n_min = {n_snippets_min},\nn_max = {n_snippets_max}, vol_min = {vol_snippets_min}")
-        ax_jsd.plot(threshold_arr, jsd_low_arr, color=self.color_list[-3], marker='o', linestyle="-", label='distance to low grad snippet')
-        ax_jsd.plot(threshold_arr, jsd_high_arr, color=self.color_list[-2], marker='o', linestyle="-", label='distance to high grad snippet')
-        if lam != 1:
-            ax_jsd.plot(threshold_arr, jsd_low_arr*lam, color=self.color_list[-1], marker='o', linestyle="-", label='distance to low grad snippet times lambda')
-        ax_jsd.set_xlabel("Gradient threshold")
-        ax_jsd.set_ylabel("JSD")
-        ax_jsd.legend()
+        # Calculate necessary histograms, masks and quantities
+        hom_mask_arr = mask_arr & (local_intensity_change_arr < local_intensity_change_threshold)
+        peak_hom_mask_arr = hom_mask_arr & (intensity_arr > peak_bounds[0]) & (intensity_arr < peak_bounds[1])
 
-        # Plot snippet histograms in bottom middle
-        ax_snp = axs[1, 1]
+        grid_arr, pdf_arr = histogram_calculation_function(intensity_arr[mask_arr])
+        hom_grid_arr, hom_pdf_arr = histogram_calculation_function(intensity_arr[hom_mask_arr])
+        lic_grid_arr, lic_pdf_arr = histogram_calculation_function(local_intensity_change_arr[mask_arr])
 
-        ax_snp.set_title(f"Histograms of highest and lowest grad snippets,\nand homogeneous region selected at threshold {chosen_threshold:.2f}")
-        ax_snp.plot(kde_grid, nonorm_low_snippet_pdf, color=self.color_list[-3], linestyle="-", label="low grad snippet")
-        ax_snp.plot(kde_grid, nonorm_high_snippet_pdf, color=self.color_list[-2], linestyle="-", label="high grad snippet")
-        ax_snp.plot(kde_grid, nonorm_chosen_pdf, color=self.color_list[2], label="chosen homogeneous region")
-        ax_snp.plot(kde_grid, nonorm_all_pdf, color=self.color_list[3], label="entire selected mask")
-        ax_snp.set_xlabel("Intensity")
-        ax_snp.set_ylabel("Probability Density")
-        ax_snp.legend()
+        peak_hom_pdf_arr = hom_pdf_arr.copy()
+        nonpeak_hom_pdf_arr = hom_pdf_arr.copy()
+        peak_hom_pdf_arr[(hom_grid_arr <= peak_bounds[0]) | (hom_grid_arr >= peak_bounds[1])] = np.nan
+        nonpeak_hom_pdf_arr[(hom_grid_arr > peak_bounds[0]) & (hom_grid_arr < peak_bounds[1])] = np.nan
 
-        # Plot peak detection in bottom right
-        ax_pks = axs[1, 2]
+        hom_lic_pdf_arr = lic_pdf_arr.copy()
+        inhom_lic_pdf_arr = lic_pdf_arr.copy()
+        hom_lic_pdf_arr[lic_grid_arr >= local_intensity_change_threshold] = np.nan
+        inhom_lic_pdf_arr[lic_grid_arr < local_intensity_change_threshold] = np.nan
 
-        n_bandwiths_threshold = 4
+        axis_arr = np.arange(mask_arr.ndim)
+        image_extent_arr = calculate_extent(intensity_arr, voxel_spacing_arr)
 
-        ax_pks.set_title(f"Histograms of detected peaks: Chosen peak at intensity: {used_peak_int_arr[chosen_peak_index]:.2f} \n"
-                         f"Settings: peak_prom_fraction = {peak_prom_fraction}, peak_selection_mode = {peak_selection_mode}")
-        ax_pks.plot(kde_grid, nonorm_all_pdf, color=self.color_list[3], label="entire selected mask")
-        ax_pks.plot(kde_grid, nonorm_chosen_pdf, color="lightgray", label="chosen homogeneous region")
-        for i, used_peaks_pdf_nonorm in enumerate(used_peaks_pdf_nonorm_list):
-            if i == chosen_peak_index:
-                continue
-            ax_pks.plot(kde_grid, used_peaks_pdf_nonorm, color=self.color_list[2], label=f"peak {i+1}")
+        # Define the intensity range we consider. Will be overriden in 3 dimensions if self.is_adjust_grayscale_to_view
+        norm = Normalize(vmin=np.nanmin(intensity_arr), vmax=np.nanmax(intensity_arr))
+        if intensity_arr.ndim == 2:
+            center_index_arr = None
+            slice_intensity_arr_list = [intensity_arr, local_intensity_change_arr]
+            slice_mask_arr_list = [mask_arr, mask_arr]
+            slice_hom_mask_arr_list = [hom_mask_arr, hom_mask_arr]
+            slice_peak_hom_mask_arr_list = [peak_hom_mask_arr, peak_hom_mask_arr]
 
-        peak_left_bound = used_peak_int_arr[chosen_peak_index]-n_bandwiths_threshold*kde_bw
-        peak_right_bound = used_peak_int_arr[chosen_peak_index]+n_bandwiths_threshold*kde_bw
-        on_peak_grid_indices = (kde_grid >= peak_left_bound) & (kde_grid <= peak_right_bound)
-        on_peak_chosen_pdf_nonorm = used_peaks_pdf_nonorm_list[chosen_peak_index].copy()
-        on_peak_chosen_pdf_nonorm[~on_peak_grid_indices] = np.nan
-        off_peak_chosen_pdf_nonorm = used_peaks_pdf_nonorm_list[chosen_peak_index].copy()
-        off_peak_chosen_pdf_nonorm[on_peak_grid_indices] = np.nan
-        ax_pks.plot(kde_grid, off_peak_chosen_pdf_nonorm, color=self.color_list[1], label=f"region outside peak")
-        ax_pks.fill_between(kde_grid, off_peak_chosen_pdf_nonorm, color=self.color_list[1], alpha=0.5)
-        ax_pks.plot(kde_grid, on_peak_chosen_pdf_nonorm, color=self.color_list[0], label=f"region inside peak {i+1}")
-        ax_pks.fill_between(kde_grid, on_peak_chosen_pdf_nonorm, color=self.color_list[0], alpha=0.5)
+            dimension_arr = np.zeros_like(axis_arr)
 
-        secondary_used_peak_int_arr = np.array([el for i, el in enumerate(used_peak_int_arr) if not i == chosen_peak_index])
-        if secondary_used_peak_int_arr.size > 0:
-            ax_pks.vlines((secondary_used_peak_int_arr), np.amin(nonorm_all_pdf),
-                          np.amax(nonorm_all_pdf), colors='gray', linestyles=":", label="found secondary intensitiy peaks")
-        ax_pks.vlines((used_peak_int_arr[chosen_peak_index]), np.amin(nonorm_all_pdf),
-                      np.amax(nonorm_all_pdf), colors='k', linestyles="--", label="final selected peak")
-        ax_pks.set_xlabel("Intensity")
-        ax_pks.set_ylabel("Probability Density")
-        ax_pks.legend()
-
-        mask_arr_list = [
-            used_peaks_mask_list[chosen_peak_index] & (image_arr > peak_left_bound) & (image_arr < peak_right_bound),
-            used_peaks_mask_list[chosen_peak_index] & ((image_arr < peak_left_bound) | (image_arr > peak_right_bound)),
-            homogeneous_mask,
-            mask_arr
-        ]
-
-        highlight_arr_list = []
-        for mask_arr in mask_arr_list:
-            # Define the highlight arr from the mask
-            highlight_arr = np.ones_like(image_arr)
-            highlight_arr[~mask_arr] = np.nan
-
-            # Exclude voxels already included in other highlights from new highlights
-            for previous_highlight_arr in highlight_arr_list:
-                highlight_arr[~np.isnan(previous_highlight_arr)] = np.nan
-
-            highlight_arr_list.append(highlight_arr)
-
-        mask_colormaps_list = [
-            ListedColormap([np.array((255, 255, 255)) / 255., self.color_list[0]]),
-            ListedColormap([np.array((255, 255, 255)) / 255., self.color_list[1]]),
-            ListedColormap([np.array((255, 255, 255)) / 255., self.color_list[2]]),
-            ListedColormap([np.array((255, 255, 255)) / 255., self.color_list[3]])
-        ]
-
-        if not self.is_adjust_grayscale_to_view:
-            norm = Normalize(vmin=np.nanmin(image_arr), vmax=np.nanmax(image_arr)) # Old way of doing it, have absolute gray scale across whole image
+            extent_1_list = [image_extent_arr[0], image_extent_arr[0]]
+            extent_2_list = [image_extent_arr[1], image_extent_arr[1]]
+            res_string_list = [" x ".join(f"{voxel_spacing_arr[index]:.2f}{mm_string}" for index in axis_arr)
+                               for i in axis_arr]
+            index_string_list = ["", ""]
         else:
-            view_minima_list = []
-            view_maxima_list = []
-            for i in range(n_dim):
-                ax = axs[0, i]
-                other_axes = tuple(j for j in range(n_dim) if not j == i)
-                most_voxels_index = np.argmax(np.count_nonzero(mask_arr_list[0], axis=other_axes)) # First given mask is the one to decide most voxel index
-                view_minima_list.append(np.nanmin(image_arr.take(indices=most_voxels_index, axis=i)))
-                view_maxima_list.append(np.nanmax(image_arr.take(indices=most_voxels_index, axis=i)))
-            all_view_minimum = np.nanmin(view_minima_list)
-            all_view_maximum = np.nanmax(view_maxima_list)
-            norm = Normalize(vmin=all_view_minimum, vmax=all_view_maximum) # New way, making sure the displayed images are used for gray scale
+            # Determine the image slices to be plotted
+            center_index_arr = calculate_largest_mask_indices(peak_hom_mask_arr)
+            slice_intensity_arr_list = select_ort_slices(intensity_arr, center_index_arr)
+            slice_mask_arr_list = select_ort_slices(mask_arr, center_index_arr)
+            slice_hom_mask_arr_list = select_ort_slices(hom_mask_arr, center_index_arr)
+            slice_peak_hom_mask_arr_list = select_ort_slices(peak_hom_mask_arr, center_index_arr)
+
+            extent_1_list = [
+                image_extent_arr[0] if not axis==0 else image_extent_arr[1] for axis in axis_arr
+            ]
+            extent_2_list = [
+                image_extent_arr[2] if not axis==2 else image_extent_arr[1] for axis in axis_arr
+            ]
+
+            # Determine plot strings based on data
+            res_string_list = [" x ".join(f"{voxel_spacing_arr[index]:.2f}{mm_string}"
+                                          for index in np.delete(axis_arr, i))
+                               for i in axis_arr]
+            index_string_list = [f"Index {center_index_arr[i]},\n" if not center_index_arr is None else ""
+                                 for i in axis_arr]
+
+            # Add local intensity change of one perspective as one of the plots
+            slice_lic_arr = select_ort_slices(local_intensity_change_arr, center_index_arr)[LIC_INDEX]
+            slice_intensity_arr_list.append(slice_lic_arr)
+            slice_mask_arr_list.append(slice_mask_arr_list[LIC_INDEX])
+            slice_hom_mask_arr_list.append(slice_hom_mask_arr_list[LIC_INDEX])
+            slice_peak_hom_mask_arr_list.append(slice_peak_hom_mask_arr_list[LIC_INDEX])
+            extent_1_list.append(extent_1_list[LIC_INDEX])
+            extent_2_list.append(extent_2_list[LIC_INDEX])
+            res_string_list.append(res_string_list[LIC_INDEX])
+            index_string_list.append(f"Local Intensity Change\nIndex {center_index_arr[LIC_INDEX]},\n")
+
+            dimension_arr = np.append(axis_arr, LIC_INDEX)
+
+            if self.is_adjust_grayscale_to_view:
+                # Take the minimum and maximum intensity from the displayed areas for normalization
+                norm = Normalize(vmin=np.nanmin(np.concatenate(slice_intensity_arr_list[:-1], axis=None)),
+                                 vmax=np.nanmax(np.concatenate(slice_intensity_arr_list[:-1], axis=None)))
+
+
+        # Set up plot depending on the amount of dimensions in the intensity array
+        # Need 1 plot for the local intensity change histogram, 1 for the histogram (including the peak) and
+        # n+1 for the image slices, where n is the number of dimensions. Use one slice through each dimension and one
+        # slice of local intensity change as a visualization aid.
+        fig, axs = plt.subplots(2, intensity_arr.ndim)
+        image_axs = axs[0, :]
+        if intensity_arr.ndim == 3:
+            # Add bottom left axes as a plot for local intensity change if have 3 dimensions
+            image_axs = np.append(image_axs, axs[1, 0])
+        lic_hist_ax = axs[1, -2]
+        hist_peak_ax = axs[1, -1]
+        plt.suptitle(title_string)
 
         cmap = "gray"
-        highlight_norm = Normalize(vmin=0.9, vmax=1.0)
-        highlight_cmap_list = mask_colormaps_list
+        mask_norm = Normalize(vmin=0.9, vmax=1.0)
 
-        highlight_alpha_list = [alpha for i, alpha in enumerate(self.alpha_list) if i < len(highlight_cmap_list)]
+        mask_cmap = ListedColormap([np.array((255, 255, 255)) / 255., self.color_list[3]])
+        hom_mask_cmap = ListedColormap([np.array((255, 255, 255)) / 255., self.color_list[1]])
+        peak_hom_mask_cmap = ListedColormap([np.array((255, 255, 255)) / 255., self.color_list[0]])
 
-        for i in range(n_dim):
-            ax = axs[0, i]
-            other_axes = tuple(j for j in range(n_dim) if not j == i)
-            most_voxels_index = np.argmax(np.count_nonzero(mask_arr_list[0], axis=other_axes)) # First given mask is the one to decide most voxel index
+        mask_alpha = self.alpha_list[3]
+        hom_mask_alpha = self.alpha_list[1]
+        peak_hom_mask_alpha = self.alpha_list[0]
 
-            extent = [0, image_arr.shape[other_axes[1]]*voxel_spacing_arr[other_axes[1]], 0, image_arr.shape[other_axes[0]]*voxel_spacing_arr[other_axes[0]]]
+        for i, image_ax in enumerate(image_axs):
+            extent = [0, extent_1_list[i], 0, extent_2_list[i]]
 
-            mm_string = " mm" if is_use_mm else ""
-            res_string = str([f"{voxel_spacing_arr[index]:.2f}{mm_string}" for index in other_axes])
-            ax.set_title(f"Index {most_voxels_index},\nResolution = {res_string}")
+            # Define the arrays to be plotted. Since the plot axis does not correspond to the data axis, we have to
+            # transpose the arrays (and reverse some data points for the z-direction due to nifti weirdness)
+            plot_slice_intensity_arr = np.copy(slice_intensity_arr_list[i]).T
+            plot_slice_mask_arr = np.copy(slice_mask_arr_list[i]).T
+            plot_slice_hom_mask_arr = np.copy(slice_hom_mask_arr_list[i]).T
+            plot_slice_peak_hom_mask_arr = np.copy(slice_peak_hom_mask_arr_list[i]).T
 
-            ax.imshow(image_arr.take(indices=most_voxels_index, axis=i), extent=extent, cmap=cmap, norm=norm,
-                      origin="lower", interpolation=INTERPOLATION_MODE)
-            for highlight_arr, highlight_cmap, highlight_alpha in zip(highlight_arr_list[::-1], highlight_cmap_list[::-1], highlight_alpha_list[::-1]):
-                ax.imshow(highlight_arr.take(indices=most_voxels_index, axis=i), extent=extent, cmap=highlight_cmap,
-                          norm=highlight_norm, alpha=highlight_alpha, origin="lower", interpolation=INTERPOLATION_MODE)
+            if dimension_arr[i] == 2:
+                plot_slice_intensity_arr[:,:] = plot_slice_intensity_arr[::-1,:]
+                plot_slice_mask_arr[:,:] = plot_slice_mask_arr[::-1,:]
+                plot_slice_hom_mask_arr[:,:] = plot_slice_hom_mask_arr[::-1,:]
+                plot_slice_peak_hom_mask_arr[:,:] = plot_slice_peak_hom_mask_arr[::-1,:]
+
+            # Do the actual plots
+            image_ax.imshow(plot_slice_intensity_arr, extent=extent, cmap=cmap, norm=norm, origin="lower",
+                            interpolation=INTERPOLATION_MODE)
+
+            image_ax.imshow(plot_slice_mask_arr, extent=extent, cmap=mask_cmap, norm=mask_norm,
+                            alpha=mask_alpha*plot_slice_mask_arr, origin="lower", interpolation=INTERPOLATION_MODE)
+            image_ax.imshow(plot_slice_hom_mask_arr, extent=extent, cmap=hom_mask_cmap, norm=mask_norm,
+                            alpha=hom_mask_alpha*plot_slice_hom_mask_arr, origin="lower",
+                            interpolation=INTERPOLATION_MODE)
+            image_ax.imshow(plot_slice_peak_hom_mask_arr, extent=extent, cmap=peak_hom_mask_cmap, norm=mask_norm,
+                            alpha=peak_hom_mask_alpha*plot_slice_peak_hom_mask_arr, origin="lower",
+                            interpolation=INTERPOLATION_MODE)
+
+            image_ax.set_title(f"{index_string_list[i]}Resolution = {res_string_list[i]}")
+            image_ax.grid(False)
+
             if is_use_mm:
-                ax.set_xlabel("mm")
-                ax.set_ylabel("mm")
+                image_ax.set_xlabel("mm")
+                image_ax.set_ylabel("mm")
 
-        if not save_path is None:
+        # Plotting local intensity change histograms
+        lic_hist_ax.plot(lic_grid_arr, hom_lic_pdf_arr, color=self.color_list[1], label="homogeneous voxels")
+        lic_hist_ax.fill_between(lic_grid_arr, hom_lic_pdf_arr, color=self.color_list[1], alpha=0.5)
+        lic_hist_ax.plot(lic_grid_arr, inhom_lic_pdf_arr, color=self.color_list[3], label="inhomogeneous voxels")
+        lic_hist_ax.fill_between(lic_grid_arr, inhom_lic_pdf_arr, color=self.color_list[3], alpha=0.5)
+
+        lic_hist_ax.legend()
+        lic_hist_ax.set_xlabel("Local Intensity Change")
+        lic_hist_ax.set_ylabel("Frequency")
+        lic_hist_ax.set_title(lic_hist_string)
+        lic_hist_ax.grid(False) # False
+
+        # Plotting homogeneous region histogram and determined histogram peak
+        hist_peak_ax.plot(grid_arr, pdf_arr, color=self.color_list[3], label="whole mask")
+        hist_peak_ax.plot(hom_grid_arr, nonpeak_hom_pdf_arr, color=self.color_list[1], label="homogeneous voxels")
+        hist_peak_ax.fill_between(hom_grid_arr, nonpeak_hom_pdf_arr, color=self.color_list[1], alpha=0.5)
+        hist_peak_ax.plot(hom_grid_arr, peak_hom_pdf_arr, color=self.color_list[0], label="voxels in peak")
+        hist_peak_ax.fill_between(hom_grid_arr, peak_hom_pdf_arr, color=self.color_list[0], alpha=0.5)
+
+        hist_peak_ax.vlines((peak_intensity), np.nanmin(pdf_arr), np.nanmax(pdf_arr),
+                            colors="k", linestyles="--", label="found peak intensity")
+
+        hist_peak_ax.legend()
+        hist_peak_ax.set_xlabel("Intensity")
+        hist_peak_ax.set_ylabel("Frequency")
+        hist_peak_ax.set_title(hist_peak_string)
+        hist_peak_ax.grid(False) # False
+
+        if not (image_name is None or mask_name is None):
+            save_path = os.path.join(f"{self.plot_folder}", f"{image_name}_mask{mask_name}{IMAGE_FORMAT}")
             px = 1/plt.rcParams['figure.dpi']
             size = (self.plot_size[0]*px, self.plot_size[1]*px)
             fig.set_size_inches(size)
             plt.tight_layout()
-            if not save_path.endswith(".png"):
-                save_path += ".png"
             plt.savefig(save_path)
             plt.close()
 
@@ -215,37 +298,42 @@ class NormVisualizer:
 class BrainSplitVisualizer:
 
 
-    def __init__(self, plot_size=(800, 600), color_list=None):
+    def __init__(self, plot_folder, plot_size=(800, 600), color_list=None):
+        self.plot_folder = plot_folder
         self.plot_size = plot_size
         self.color_list = color_list if not color_list is None else ["black", "green", "lime"]
 
-    def visualize_histogram_split(self, kde_grid, all_pdf, grad_weighted_pdf, median_int, split_int, erosion_width,
-                                  cutoff_percentiles, comparison_arr, comparison_arr_raw, save_path=None):
+    def visualize_histogram_split(self, grid_arr, pdf_arr, lic_weighted_pdf_arr, split_int, erosion_width,
+                                  cutoff_percentiles, avg_lic_arr, avg_lic_arr_raw, image_name=None):
+        # Rescale the lic weighted pdf so that it can be shown on the same scale as the pdf
+        plottable_lic_weighted_pdf_arr = lic_weighted_pdf_arr/np.nansum(lic_weighted_pdf_arr)*np.nansum(pdf_arr)
+
         fig, ax1 = plt.subplots()
         ax2 = ax1.twinx()
-        plt.title(f"Split intensity: {split_int}\nSettings: Brain erosion width: {erosion_width}, edges cutoff {cutoff_percentiles}%"
-                  #f"; softmax exponent {exponent}"
-                  )
-        ax1.plot(kde_grid, all_pdf, color="k", label="total histogram")
-        ax1.plot(kde_grid, grad_weighted_pdf, color="lime", label="gradient weighted histogram")
-        ax1.plot([kde_grid[0]], [all_pdf[0]], color="g", label="average gradient histogram")
-        ax1.vlines((median_int), np.amin(all_pdf), np.amax(all_pdf), colors='gray', linestyles=":", label="median")
-        ax1.vlines((split_int), np.amin(all_pdf), np.amax(all_pdf), colors='g', linestyles="--", label="found split")
+        plt.title(f"Split intensity: {split_int:.2f}\nSettings: Brain erosion width: {erosion_width},"
+                  f"\n edges cutoff {cutoff_percentiles}%")
+        ax1.plot(grid_arr, pdf_arr, color=self.color_list[0], label="total histogram")
+        ax1.plot(grid_arr, plottable_lic_weighted_pdf_arr, color=self.color_list[2],
+                 label="local intensity change weighted histogram\n(arbitrary scale)")
+        # Plot this invisible line to make sure the average local intensity change curve shows up in the legend easily.
+        ax1.plot([grid_arr[0]], [pdf_arr[0]], color=self.color_list[1], label="average local intensity change")
+        ax1.vlines((split_int), np.amin(pdf_arr), np.amax(pdf_arr), colors=self.color_list[1], linestyles="--",
+                   label="found split")
+
         ax1.set_xlabel("Intensity")
         ax1.set_ylabel("Probability Density")
         ax1.legend()
-        ax2.plot(kde_grid, comparison_arr_raw, color="g", linestyle=":", label="non-truncated evaluation function")
-        ax2.plot(kde_grid, comparison_arr, color="g", label="evaluation function")
-        #ax2.set_ylabel("Evaluation Function")
-        ax2.set_ylabel("Average Gradient")
+        ax2.plot(grid_arr, avg_lic_arr_raw, color="g", linestyle=":", label="average local intensity change")
+        ax2.plot(grid_arr, avg_lic_arr, color="g", label="average local intensity change after exclusion")
+        ax2.set_ylabel("Local Intensity Change")
 
-        if not save_path is None:
+        ax2.set_ylim(0, 1.5*np.nanmax(avg_lic_arr))
+
+        if not image_name is None:
+            save_path = os.path.join(f"{self.plot_folder}", f"{image_name}_brainsplit{IMAGE_FORMAT}")
             px = 1/plt.rcParams['figure.dpi']
             size = (self.plot_size[0]*px, self.plot_size[1]*px)
             fig.set_size_inches(size)
             plt.tight_layout()
-            if not save_path.endswith(".png"):
-                save_path += ".png"
-            #plt.show()
             plt.savefig(save_path)
             plt.close()
