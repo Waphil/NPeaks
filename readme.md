@@ -36,7 +36,7 @@ Once the two masks have been determined, N-Peaks normalization can be applied to
 
 ## Advanced usage
 
-For most functions in the NPeaksNormalizer class, there exist an implementation with the "_custom" postfix. If these are called, the user has more control over what functions are used exactly, for example if the user wants to use a custom implementation for the local intensity change determination or the histogram peak detection.
+For most functions in the NPeaksNormalizer class, there exist implementations with the "_custom" postfix. If these are called, the user has more control over what functions are used exactly, for example if the user wants to use a custom implementation for the local intensity change determination or the histogram peak detection. Consult the docstrings of the functions in question to obtain more information.
 
 ## Parameter Choice Guide
 
