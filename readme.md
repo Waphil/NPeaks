@@ -20,18 +20,23 @@ Matplotlib
 
 ## How to use it
 
-The file npeaks_normalize.py contains a class called NPeaksNormalizer. To use the normalization, instantiate a new object of that class.
+The file npeaks_normalize.py contains a class called NPeaksNormalizer. To use the normalization, instantiate a new object of that class. Then, you can call the _normalize_ method of the object on an image.
 
-For a numpy array representing an MR image, the histogram intensity peaks in the 
+The _normalize_ method needs an image, a list of binary masks (representing the tissues to be normalized) and a list of target intensities for those masks. For information on further input parameters, consult the docstring and the table below. The method will return the normalized image.
 
-Multiple visualization tools are implemented in visualize.py. You can instantiate a NormVisualizer object and pass it to the NPeaksNormalizer to obtain visualization plots when applying the normalization.
+If you do not want to receive the normalized image as a return object, but the determined landmark peaks (e.g. if you want to dynamically determine the target intensities), you can use the _find_peaks_ method of the normalizer class instead. The function to perform a piecewise linear intensity rescaling is given in _transform_intensity_scale_.
 
+Multiple visualization tools are implemented in visualize.py. You can instantiate a NormVisualizer object and pass it to the NPeaksNormalizer when you define it to obtain visualization plots when applying the normalization. It is strongly recommended to plot the results of the normalization to verify that the result is as desired. The plots can also give important insights into which parameters need to be adjusted to get a better result.
+
+## Normalization for the Brain
+
+The code features a method that can heuristically segment brain images into ventricles and parenchyma if the brain mask is given as input. That way, these two masks can be used for normalization in a subsequent step. The method finds an intensity interval which has particularly high average local intensity change and determines that this must correspond not to a homogeneous tissue, but to the partial volume voxels between CSF and parenchyma. It then uses thresholding in that interval to determine the two masks. The method can be used by calling _split_brain_mask_ for an NPeaksNormalizer object. It also features its own visualization options using the class BrainSplitVisualizer in visualize.py
+
+Once the two masks have been determined, N-Peaks normalization can be applied to the images with those masks and the isolation of homogeneous tissue can be used to automatically isolate white matter from the parenchymal tissue. The default settings of the provided N-Peaks normalization should give sensible results for brain masks created with the _split_brain_mask_ tool.
 
 ## Advanced usage
 
-Default settings should work reasonably well for brain images.
-
-
+For most functions in the NPeaksNormalizer class, there exist an implementation with the "_custom" postfix. If these are called, the user has more control over what functions are used exactly, for example if the user wants to use a custom implementation for the local intensity change determination or the histogram peak detection.
 
 ## Parameter Choice Guide
 
